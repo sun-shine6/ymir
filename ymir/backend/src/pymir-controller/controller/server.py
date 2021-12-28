@@ -68,12 +68,15 @@ def path_constructor(loader: Any, node: Any) -> str:
     if not match:
         return ''
     env_var = match.group()[2:-1]
-    return os.environ.get(env_var) + value[match.end():]
+    env_value = os.environ.get(env_var)
+    if not env_value:
+        logging.info(f"env empty for key: {env_var}")
+    return env_value + value[match.end():]
 
 
 def parse_config_file(config_file: str) -> Any:
-    yaml.add_implicit_resolver("./test.yml", path_matcher, None, yaml.SafeLoader)
-    yaml.add_constructor("./test.yml", path_constructor, yaml.SafeLoader)
+    yaml.add_implicit_resolver("!path", path_matcher, None, yaml.SafeLoader)
+    yaml.add_constructor("!path", path_constructor, yaml.SafeLoader)
 
     with open(config_file) as f:
         return yaml.safe_load(f)

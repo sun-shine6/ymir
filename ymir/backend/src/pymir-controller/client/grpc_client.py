@@ -17,6 +17,8 @@ class ControllerClient:
         self.stub = backend_pb2_grpc.mir_controller_serviceStub(channel)
         self.user = user
         self.repo = repo
+        self.executor_config = ''
+        self.executor_name = ''
 
     def process_req(self, req: Any) -> Any:
         resp = self.stub.data_manage_request(req)
@@ -91,7 +93,6 @@ def _build_task_mining_req(args: Dict) -> backend_pb2.GeneralReq:
     mine_task_req = backend_pb2.TaskReqMining()
     if args.get('top_k', None):
         mine_task_req.top_k = args['top_k']
-    mine_task_req.model_hash = args['model_hash']
     mine_task_req.in_dataset_ids[:] = args['in_dataset_ids']
     if args.get('ex_dataset_ids', None):
         mine_task_req.ex_dataset_ids[:] = args['ex_dataset_ids']
@@ -132,6 +133,14 @@ def _build_task_labeling_req(args: Dict) -> backend_pb2.GeneralReq:
     return req_create_task
 
 
+def _get_executor_config(args: Any) -> str:
+    executor_config = ''
+    if args['executor_config']:
+        with open(args['executor_config'], 'r') as f:
+            executor_config = f.read()
+    return executor_config
+
+
 def call_create_task(client: ControllerClient, *, args: Any) -> Optional[str]:
     args = vars(args)
     req_name = "_build_task_{}_req".format(args["task_type"])
@@ -140,8 +149,13 @@ def call_create_task(client: ControllerClient, *, args: Any) -> Optional[str]:
     req = invoker_call.make_cmd_request(user_id=args["user"],
                                         repo_id=args["repo"],
                                         task_id=args["tid"],
+                                        model_hash=args["model_hash"],
                                         req_type=backend_pb2.TASK_CREATE,
-                                        req_create_task=task_req)
+                                        req_create_task=task_req,
+                                        executor_instance=args['tid'],
+                                        merge_strategy=1,
+                                        docker_image_config=_get_executor_config(args),
+                                        singleton_op=args['executor_name'])
     logging.info(json_format.MessageToDict(req, preserving_proto_field_name=True, use_integers_for_enums=True))
     return client.process_req(req)
 
@@ -166,13 +180,14 @@ def get_parser() -> Any:
     common_group.add_argument(
         "-g",
         "--grpc",
-        default="127.0.0.1:50051",
+        default="127.0.0.1:50066",
         type=str,
         help="grpc channel",
     )
     common_group.add_argument("-u", "--user", type=str, help="default user")
     common_group.add_argument("-r", "--repo", type=str, help="default mir repo")
     common_group.add_argument("-t", "--tid", type=str, help="task id")
+    common_group.add_argument("--model_hash", type=str, help="model hash")
     common_group.add_argument("--labels", type=str, help="labels to be added, seperated by comma.")
 
     # CMD CALL
@@ -193,13 +208,14 @@ def get_parser() -> Any:
     parser_create_task.add_argument("--ex_class_ids", nargs="*", type=int)
     parser_create_task.add_argument("--in_dataset_ids", nargs="*", type=str)
     parser_create_task.add_argument("--ex_dataset_ids", nargs="*", type=str)
-    parser_create_task.add_argument("--model_hash", type=str, help="model_hash")
     parser_create_task.add_argument("--asset_dir", type=str)
     parser_create_task.add_argument("--annotation_dir", type=str)
     parser_create_task.add_argument("--top_k", type=int)
     parser_create_task.add_argument("--expert_instruction_url", type=str)
     parser_create_task.add_argument("--labeler_accounts", nargs="*", type=str)
     parser_create_task.add_argument("--project_name", type=str)
+    parser_create_task.add_argument("--executor_config", type=str, default='')
+    parser_create_task.add_argument("--executor_name", type=str, default='')
     parser_create_task.set_defaults(func=call_create_task)
 
     # GET TASK INFO
@@ -223,6 +239,7 @@ def run() -> None:
         print("invalid argument, try -h to get more info")
         return
 
+    logging.info(f"args: {args}")
     client = ControllerClient(args.grpc, args.repo, args.user)
     args.func(client, args=args)
 
